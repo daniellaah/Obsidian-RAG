@@ -3,8 +3,8 @@
 Local retrieval over Markdown notes using Python, NumPy, and Ollama.
 
 The repository includes a Markdown note loader, an Ollama embedding client
-function, and five English notes in `example_notes/`. Similarity search and answer
-generation are not implemented yet.
+function, cosine similarity search, answer generation, and five English notes
+in `example_notes/`.
 
 ## Requirements
 
@@ -80,6 +80,93 @@ to the caller.
 The automated embedding tests mock the Ollama client and require no running
 model. The example above makes a real request to the local Ollama service.
 
+## Retrieve notes
+
+`obsidian_rag.retrieval.retrieve` ranks notes by cosine similarity and returns
+`SearchResult` objects containing the original `note` and a numeric `score`.
+Each row of the note matrix must correspond to the note at the same index. Pass
+a single query vector with the same dimension, using the same embedding model
+for notes and queries.
+
+```python
+from pathlib import Path
+
+from ollama import Client
+
+from obsidian_rag.embeddings import embed_texts
+from obsidian_rag.notes import load_notes
+from obsidian_rag.retrieval import retrieve
+
+client = Client(host="http://127.0.0.1:11434", timeout=60, trust_env=False)
+notes = load_notes(Path("example_notes"))
+note_vectors = embed_texts(
+    [f"{note.title}\n\n{note.content}" for note in notes],
+    client=client,
+)
+question = "When should temporary notes be processed and deleted?"
+query = (
+    "Instruct: Given a question, retrieve relevant notes that help answer it.\n"
+    f"Query:{question}"
+)
+query_vector = embed_texts([query], client=client)[0]
+
+for result in retrieve(notes, note_vectors, query_vector, top_k=2):
+    print(f"{result.score:.4f} {result.note.source}: {result.note.title}")
+```
+
+The query includes a task instruction in the format recommended by the
+[Qwen3 Embedding model card](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B).
+Note text is embedded without that instruction. `embed_texts` passes its inputs
+to the model unchanged, so the caller prepares the query text.
+
+`top_k` defaults to 2 and must be a positive integer. Results are sorted by
+score from highest to lowest; ties preserve input order. If fewer notes are
+available, all are returned. An empty collection with a zero-row matrix returns
+an empty list. Incompatible shapes, non-finite values, zero vectors, and
+non-finite vector norms raise `ValueError`. Input vectors are left unchanged.
+
+Retrieval tests use small, fixed vectors and require no model or network access.
+The example above calls Ollama. A similarity score ranks relevance; it is not a
+probability or proof that a note contains an answer. Answer generation must still
+check whether the retrieved text supports a response.
+
+## Generate an answer
+
+`obsidian_rag.generation.generate_answer` takes the original question and the
+`SearchResult` list returned by `retrieve`. It sends the question and note titles,
+content, and source filenames to Ollama, then returns the answer as a string.
+Retrieval order is preserved. The default generation model is `qwen3.5:4b`.
+
+After running the retrieval example above, generate an answer with:
+
+```python
+from obsidian_rag.generation import generate_answer
+
+results = retrieve(notes, note_vectors, query_vector, top_k=2)
+answer = generate_answer(question, results, client=client)
+print(answer)
+```
+
+Pass the original question rather than the embedding query with its task
+instruction. Supply `model="your-local-model"` to select another generation
+model. The supplied Ollama client controls the host and timeout. Requests use
+non-streaming output, disable thinking, and set temperature to zero. Only answer
+text is returned, with surrounding whitespace removed.
+
+The prompt asks the model to use only the retrieved notes, cite claims with
+filenames such as `[fleeting_notes.md]`, and explicitly acknowledge missing
+information. Note text is treated as source material. These instructions do not
+guarantee factual accuracy; the function does not independently verify generated
+claims or citations.
+
+An empty result list returns an insufficient-information message without
+contacting Ollama. Blank questions and empty model responses raise `ValueError`.
+Ollama and connection errors propagate to the caller.
+
+Generation tests mock the external Ollama client and run without a model. They
+verify the request and response contract. Check answer quality separately with
+the local model, including questions whose answers are absent from the notes.
+
 ## Local models
 
 Ollama serves its local API at `http://127.0.0.1:11434` by default. Start Ollama if
@@ -94,9 +181,8 @@ ollama list
 | Text embeddings | `qwen3-embedding:0.6b` |
 | Answer generation | `qwen3.5:4b` |
 
-The generation model is planned for the answer-generation stage. Model files are
-managed separately by Ollama; syncing the Python environment does not download
-them.
+Model files are managed separately by Ollama; syncing the Python environment
+does not download them.
 
 ## Repository layout
 

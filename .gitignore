@@ -4,7 +4,10 @@
 .ruff_cache/
 __pycache__/
 *.pyc
-.demo-state/
 dist/
+build/
 *.egg-info/
-minimal/.index.json
+/config.toml
+/.env
+/.env.*
+!/.env.example

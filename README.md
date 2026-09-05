@@ -2,8 +2,9 @@
 
 Local retrieval over Markdown notes using Python, NumPy, and Ollama.
 
-The repository includes a Markdown note loader and five English notes in
-`example_notes/`. Retrieval and answer generation are not implemented yet.
+The repository includes a Markdown note loader, an Ollama embedding client
+function, and five English notes in `example_notes/`. Similarity search and answer
+generation are not implemented yet.
 
 ## Requirements
 
@@ -51,6 +52,33 @@ Run the tests with:
 ```sh
 uv run --locked pytest -q
 ```
+
+## Generate embeddings
+
+`obsidian_rag.embeddings.embed_texts` converts a list of texts into a NumPy matrix
+with one vector per input, preserving order. Supply an Ollama client to select the
+server and timeout. The default model is `qwen3-embedding:0.6b`.
+
+```python
+from ollama import Client
+from obsidian_rag.embeddings import embed_texts
+
+client = Client(host="http://127.0.0.1:11434", timeout=60, trust_env=False)
+vectors = embed_texts(
+    ["Capture a passing thought.", "Connect related ideas."],
+    client=client,
+)
+print(vectors.shape)
+```
+
+Use the same embedding model for documents and questions. An empty input list
+returns a `(0, 0)` matrix without contacting Ollama. Blank texts, inconsistent
+vector shapes, non-finite values, and zero vectors raise `ValueError`. Automatic
+truncation is disabled; oversized inputs and Ollama service errors are reported
+to the caller.
+
+The automated embedding tests mock the Ollama client and require no running
+model. The example above makes a real request to the local Ollama service.
 
 ## Local models
 

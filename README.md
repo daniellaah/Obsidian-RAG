@@ -2,9 +2,8 @@
 
 Local retrieval over Markdown notes using Python, NumPy, and Ollama.
 
-The repository currently contains the project environment, a Python package
-skeleton, and five English notes in `example_notes/`. Retrieval and answer
-generation are not implemented yet.
+The repository includes a Markdown note loader and five English notes in
+`example_notes/`. Retrieval and answer generation are not implemented yet.
 
 ## Requirements
 
@@ -34,6 +33,25 @@ uv run --locked python -c "import obsidian_rag, numpy, ollama; print('Imports OK
 uv run --locked pytest --version
 ```
 
+## Read notes
+
+`obsidian_rag.notes.load_notes` accepts a directory as a `pathlib.Path` and returns
+notes with `title`, `content`, and `source` fields. It reads UTF-8 `.md` files
+directly inside that directory in filename order.
+
+The first line starting with `# ` becomes the title and is removed from the body.
+If there is no such line, the filename without its extension becomes the title.
+Other Markdown remains in the body, with leading and trailing whitespace removed.
+Source references contain filenames rather than absolute paths. An empty
+directory returns an empty list; filesystem and decoding errors are reported to
+the caller.
+
+Run the tests with:
+
+```sh
+uv run --locked pytest -q
+```
+
 ## Local models
 
 Ollama serves its local API at `http://127.0.0.1:11434` by default. Start Ollama if
@@ -57,6 +75,7 @@ them.
 ```text
 example_notes/       Markdown documents
 src/obsidian_rag/    Python package
+tests/              Automated tests
 pyproject.toml      Project metadata and dependencies
 uv.lock             Resolved dependency versions
 ```

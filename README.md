@@ -2,9 +2,9 @@
 
 Local retrieval over Markdown notes using Python, NumPy, and Ollama.
 
-The repository includes a Markdown note loader, an Ollama embedding client
-function, cosine similarity search, answer generation, and five English notes
-in `example_notes/`.
+The repository includes a command-line interface, a Markdown note loader, an
+Ollama embedding client function, cosine similarity search, answer generation,
+and five English notes in `example_notes/`.
 
 ## Requirements
 
@@ -33,6 +33,52 @@ uv run --locked python --version
 uv run --locked python -c "import obsidian_rag, numpy, ollama; print('Imports OK')"
 uv run --locked pytest --version
 ```
+
+## Ask a question
+
+After syncing the environment and starting Ollama with the models below
+available, run this command from the repository root:
+
+```sh
+uv run --locked obsidian-rag "When should temporary notes be processed and deleted?"
+```
+
+The command reads `example_notes/`, embeds the notes and question, retrieves the
+two most similar notes, and prints the generated answer. The embedding query
+uses a Qwen retrieval instruction; answer generation receives the original
+question. Each invocation reads and embeds the notes again, keeping vectors in
+memory for that invocation.
+
+Specify another note directory or result count with:
+
+```sh
+uv run --locked obsidian-rag "How do literature and permanent notes differ?" \
+  --notes-dir example_notes --top-k 2
+```
+
+Relative note paths are resolved from the current working directory. The loader
+reads Markdown files directly in that directory without visiting subdirectories.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--notes-dir` | `example_notes` | Directory containing Markdown notes |
+| `--top-k` | `2` | Maximum number of notes used for the answer |
+| `--embedding-model` | `qwen3-embedding:0.6b` | Qwen embedding model |
+| `--generation-model` | `qwen3.5:4b` | Model used to generate the answer |
+| `--host` | `http://127.0.0.1:11434` | Ollama server URL |
+| `--timeout` | `180` | Request timeout in seconds |
+
+`--top-k` must be a positive integer and `--timeout` a positive finite number.
+Answers go to standard output; errors go to standard error. Exit codes are `0`
+for success, `1` for a runtime failure, and `2` for invalid arguments. An empty
+note directory reports an error without contacting Ollama.
+
+Show all options with `uv run --locked obsidian-rag --help`. The same interface
+is available through `uv run --locked python -m obsidian_rag.cli`.
+
+CLI tests exercise the note loader, embedding conversion, retrieval, and answer
+generation together while mocking only the external Ollama client. They do not
+require a running model.
 
 ## Read notes
 

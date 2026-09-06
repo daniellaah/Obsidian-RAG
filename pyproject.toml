@@ -5,9 +5,13 @@ description = "Local retrieval over Markdown notes."
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "httpx>=0.28,<1",
     "numpy>=2,<3",
     "ollama>=0.6,<1",
 ]
+
+[project.scripts]
+obsidian-rag = "obsidian_rag.cli:main"
 
 [dependency-groups]
 dev = [

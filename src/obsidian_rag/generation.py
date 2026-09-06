@@ -4,7 +4,6 @@ import json
 
 from ollama import Client
 
-from obsidian_rag.chunking import Chunk
 from obsidian_rag.retrieval import SearchResult
 
 
@@ -22,7 +21,7 @@ and do not guess. Keep the answer concise.
 
 def generate_answer(
     question: str,
-    results: list[SearchResult[Chunk]],
+    results: list[SearchResult],
     *,
     client: Client,
     model: str = "qwen3.5:4b",

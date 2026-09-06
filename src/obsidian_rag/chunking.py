@@ -97,9 +97,6 @@ def chunk_notes(
 def _chunk_spans(
     text: str, *, count_tokens: Callable[[str], int], chunk_size: int, chunk_overlap: int
 ) -> list[tuple[int, int]]:
-    if count_tokens(text) <= chunk_size:
-        return [(0, len(text))]
-
     chunks = []
     pending: deque[tuple[int, int]] = deque()
     for start, end in _split_spans(

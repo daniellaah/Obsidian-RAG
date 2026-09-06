@@ -99,6 +99,62 @@ Run the tests with:
 uv run --locked pytest -q
 ```
 
+## Count tokens
+
+`obsidian_rag.tokenization` provides local token counts for Ollama's
+`qwen3-embedding:0.6b`. This is a standalone building block for chunking; the CLI
+still embeds and retrieves whole notes.
+
+```python
+from obsidian_rag.tokenization import count_tokens, load_tokenizer
+
+tokenizer = load_tokenizer()  # Download the tokenizer if needed, then reuse it.
+title = "Permanent Notes"
+body = "Develop one idea per note."
+
+body_tokens = count_tokens(body, tokenizer=tokenizer)
+input_tokens = count_tokens(
+    f"{title}\n\n{body}", tokenizer=tokenizer, add_special_tokens=True
+)
+print(body_tokens, input_tokens)
+```
+
+The loader fetches only `tokenizer.json` (about 11.4 MB) from the public
+[Qwen3-Embedding-0.6B repository](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
+at revision `c54f2e6e80b2d7b7de06f51cec4959f6b3e03418`. It uses the Hugging Face
+Hub cache, or an explicit `cache_dir=Path(...)`. It does not download model
+weights or require PyTorch, Transformers, or an Ollama connection. After caching
+that snapshot, use `load_tokenizer(local_files_only=True)` to prevent all Hub
+network requests. A missing offline snapshot or download failure is reported to
+the caller; there is no fallback to character counting.
+
+`count_tokens` excludes automatically added special tokens by default, including
+when measuring chunk size or overlap. Empty text has a count of zero. For a full
+nonempty embedding request, measure the assembled title and body together with
+`add_special_tokens=True`; Ollama appends an end marker even when the text itself
+ends with that marker. Concatenated text must be measured as a whole, since its
+token count need not equal the sum of the individual counts. The helper does not
+split text or enforce a context limit. Keep the returned tokenizer's padding and
+truncation disabled.
+
+The tokenizer library is pinned to `0.23.2`. The loader disables the official
+file's NFC normalization to match the combining-character behavior verified
+with Ollama `0.33.2`. This pairing is validated for `qwen3-embedding:0.6b`; do not
+assume it measures arbitrary embedding models correctly. Recheck compatibility
+when changing the model or tokenizer configuration.
+
+Regular tokenization tests run offline using a tiny tokenizer in a temporary Hub
+cache. They cover loading, counts, Unicode handling, end markers, and failures.
+The optional integration tests use the actual cached snapshot and the local
+Ollama model, including Chinese, English, Markdown, code, emoji, and token-length
+boundaries. Prepare the tokenizer with `load_tokenizer()` and make sure Ollama is
+running with `qwen3-embedding:0.6b`, then run:
+
+```sh
+OBSIDIAN_RAG_RUN_MODEL_TESTS=1 .venv/bin/python -B -m pytest \
+  -p no:cacheprovider -q tests/integration/test_qwen_tokenizer.py
+```
+
 ## Generate embeddings
 
 `obsidian_rag.embeddings.embed_texts` converts a list of texts into a NumPy matrix

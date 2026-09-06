@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 from httpx import ReadError, ReadTimeout
 from ollama import ChatResponse, Client, EmbedResponse, Message, ResponseError
+from tokenizers import Tokenizer, models, pre_tokenizers, processors
 
 from obsidian_rag.cli import main
 
@@ -112,6 +113,7 @@ def test_main_accepts_directory_retrieval_model_and_connection_options(
         "--notes-dir", "other_notes",
         "--top-k", "1",
         "--embedding-model", "qwen3-embedding:4b",
+        "--chunking", "none",
         "--generation-model", "another-local-model",
         "--host", "http://127.0.0.1:11435",
         "--timeout", "15.5",
@@ -258,3 +260,91 @@ def test_main_reports_an_empty_model_answer(
     output = capsys.readouterr()
     assert output.out == ""
     assert "empty answer" in output.err
+
+
+@pytest.fixture(autouse=True)
+def tokenizer_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Mock:
+    tokenizer = Tokenizer(models.WordLevel({"[UNK]": 0, "<|endoftext|>": 1},
+                                           unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = pre_tokenizers.Split("", behavior="isolated")
+    tokenizer.post_processor = processors.TemplateProcessing(
+        single="$A <|endoftext|>", special_tokens=[("<|endoftext|>", 1)],
+    )
+    path = tmp_path / "tokenizer.json"
+    tokenizer.save(str(path))
+    download = Mock(return_value=str(path))
+    monkeypatch.setattr("obsidian_rag.tokenization.hf_hub_download", download)
+    return download
+
+
+def test_main_embeds_chunks_and_generates_from_the_selected_passage(
+    workspace: Path, client: MagicMock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = workspace / "long_notes"
+    directory.mkdir()
+    (directory / "long.md").write_text("# Long\n\naaaa\n\nbbbb\n\ncccc")
+    client.embed.side_effect = [
+        EmbedResponse(embeddings=[[0.0, 1.0], [1.0, 0.0], [0.5, 0.5]]),
+        EmbedResponse(embeddings=[[1.0, 0.0]]),
+    ]
+
+    status = main(["Which passage?", "--notes-dir", "long_notes", "--top-k", "1",
+                   "--chunk-size", "6", "--chunk-overlap", "0"])
+
+    assert status == 0
+    assert client.embed.call_args_list[0].kwargs["input"] == [
+        "Long\n\naaaa\n\n", "Long\n\nbbbb\n\n", "Long\n\ncccc",
+    ]
+    payload = json.loads(client.chat.call_args.kwargs["messages"][1]["content"])
+    assert payload["notes"] == [{"title": "Long", "content": "bbbb\n\n", "source": "long.md"}]
+    assert capsys.readouterr().err == ""
+
+
+def test_main_whole_note_mode_does_not_load_a_tokenizer(
+    tokenizer_download: Mock, client: MagicMock,
+) -> None:
+    status = main(["A question?", "--chunking", "none",
+                   "--embedding-model", "qwen3-embedding:4b"])
+
+    assert status == 0
+    tokenizer_download.assert_not_called()
+    assert len(client.embed.call_args_list[0].kwargs["input"]) == 3
+
+
+@pytest.mark.parametrize("options", [
+    ["--chunk-size", "0"],
+    ["--chunk-overlap", "-1"],
+    ["--chunk-size", "64", "--chunk-overlap", "64"],
+    ["--embedding-model", "another-model"],
+])
+def test_main_rejects_invalid_chunking_before_download_or_model_calls(
+    options: list[str], tokenizer_download: Mock, client_factory: Mock,
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(["A question?", *options])
+    assert error.value.code == 2
+    tokenizer_download.assert_not_called()
+    client_factory.assert_not_called()
+
+
+def test_main_supports_an_offline_tokenizer_cache(
+    workspace: Path, tokenizer_download: Mock,
+) -> None:
+    status = main(["A question?", "--offline", "--tokenizer-cache", "my_cache"])
+
+    assert status == 0
+    assert tokenizer_download.call_args.kwargs["local_files_only"] is True
+    assert tokenizer_download.call_args.kwargs["cache_dir"] == Path("my_cache")
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("Tokenizer is not cached."),
+                                  ReadError("Tokenizer download failed.")])
+def test_main_reports_tokenizer_failures_before_model_calls(
+    tokenizer_download: Mock, client_factory: Mock,
+    capsys: pytest.CaptureFixture[str], error: Exception,
+) -> None:
+    tokenizer_download.side_effect = error
+
+    assert main(["A question?", "--offline"]) == 1
+    assert str(error) in capsys.readouterr().err
+    client_factory.assert_not_called()

@@ -4,7 +4,7 @@ Local retrieval over Markdown notes using Python, NumPy, and Ollama.
 
 The repository includes a command-line interface, a Markdown note loader, an
 Ollama embedding client function, cosine similarity search, answer generation,
-and five English notes in `example_notes/`.
+and sample Markdown notes in `example_notes/`.
 
 ## Requirements
 
@@ -43,11 +43,11 @@ available, run this command from the repository root:
 uv run --locked obsidian-rag "When should temporary notes be processed and deleted?"
 ```
 
-The command reads `example_notes/`, embeds the notes and question, retrieves the
-two most similar notes, and prints the generated answer. The embedding query
+The command reads `example_notes/`, splits long notes into chunks, embeds the
+chunks and question, retrieves the two most similar chunks, and prints the answer. The embedding query
 uses a Qwen retrieval instruction; answer generation receives the original
-question. Each invocation reads and embeds the notes again, keeping vectors in
-memory for that invocation.
+question. Each invocation reads, splits, and embeds the notes again, keeping
+chunks and vectors in memory for that invocation.
 
 Specify another note directory or result count with:
 
@@ -62,11 +62,24 @@ reads Markdown files directly in that directory without visiting subdirectories.
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--notes-dir` | `example_notes` | Directory containing Markdown notes |
-| `--top-k` | `2` | Maximum number of notes used for the answer |
+| `--top-k` | `2` | Maximum number of chunks used for the answer |
 | `--embedding-model` | `qwen3-embedding:0.6b` | Qwen embedding model |
 | `--generation-model` | `qwen3.5:4b` | Model used to generate the answer |
 | `--host` | `http://127.0.0.1:11434` | Ollama server URL |
-| `--timeout` | `180` | Request timeout in seconds |
+| `--timeout` | `180` | Ollama request timeout in seconds |
+| `--chunking` | `recursive` | `recursive` for B1, `none` for whole-note B0 |
+| `--chunk-size` | `512` | Maximum body tokens per chunk |
+| `--chunk-overlap` | `64` | Target overlap in body tokens |
+| `--tokenizer-cache` | Hub default | Optional tokenizer cache directory |
+| `--offline` | off | Prevent tokenizer Hub requests; Ollama is still used |
+
+Recursive mode currently supports the validated `qwen3-embedding:0.6b` tokenizer
+pairing. For another embedding model, use `--chunking none`. In recursive mode,
+`--chunk-size` must be positive and `0 <= --chunk-overlap < --chunk-size`.
+Use `--offline` after the tokenizer is cached; missing cache files are reported.
+Whole-note mode never loads a tokenizer and ignores the chunk budget options.
+Embedding requests keep `truncate=False`, so Ollama rejects full inputs exceeding
+its active context limit rather than silently truncating titles or text.
 
 `--top-k` must be a positive integer and `--timeout` a positive finite number.
 Answers go to standard output; errors go to standard error. Exit codes are `0`
@@ -76,9 +89,9 @@ note directory reports an error without contacting Ollama.
 Show all options with `uv run --locked obsidian-rag --help`. The same interface
 is available through `uv run --locked python -m obsidian_rag.cli`.
 
-CLI tests exercise the note loader, embedding conversion, retrieval, and answer
-generation together while mocking only the external Ollama client. They do not
-require a running model.
+CLI tests exercise loading, tokenization, chunking, embedding conversion,
+retrieval, and generation together. Only the external tokenizer download and
+Ollama client are mocked; the regular tests need no network or running model.
 
 ## Read notes
 
@@ -102,8 +115,8 @@ uv run --locked pytest -q
 ## Count tokens
 
 `obsidian_rag.tokenization` provides local token counts for Ollama's
-`qwen3-embedding:0.6b`. This is a standalone building block for chunking; the CLI
-still embeds and retrieves whole notes.
+`qwen3-embedding:0.6b`. The recursive CLI path loads this tokenizer once per
+invocation and reuses it for all chunk counts.
 
 ```python
 from obsidian_rag.tokenization import count_tokens, load_tokenizer
@@ -189,7 +202,8 @@ zero, and repeated passages keep their distinct positions. Text, whitespace, and
 Markdown markers are preserved verbatim; this baseline does not interpret code
 fences or table structure. Empty bodies retain their title and source in one
 chunk. Invalid budgets and a fallback character that cannot fit raise `ValueError`.
-All chunks remain in memory. CLI integration is a separate step.
+All chunks remain in memory. The CLI uses recursive chunks by default; select
+`--chunking none` to use whole-note chunks.
 
 The standard chunking tests are offline. To check the real Qwen tokenizer's
 512/64 budgets and lossless reconstruction on long multilingual examples, cache
@@ -227,27 +241,33 @@ to the caller.
 The automated embedding tests mock the Ollama client and require no running
 model. The example above makes a real request to the local Ollama service.
 
-## Retrieve notes
+## Retrieve chunks
 
-`obsidian_rag.retrieval.retrieve` ranks notes by cosine similarity and returns
+`obsidian_rag.retrieval.retrieve` ranks chunks by cosine similarity and returns
 `SearchResult` objects containing the original `chunk` and a numeric `score`.
-Each row of the note matrix must correspond to the note at the same index. Pass
+Each row of the chunk matrix must correspond to the chunk at the same index. Pass
 a single query vector with the same dimension, using the same embedding model
-for notes and queries.
+for chunks and queries.
 
 ```python
 from pathlib import Path
 
 from ollama import Client
 
+from functools import partial
+
+from obsidian_rag.chunking import chunk_notes
+from obsidian_rag.tokenization import count_tokens, load_tokenizer
 from obsidian_rag.embeddings import embed_texts
 from obsidian_rag.notes import load_notes
 from obsidian_rag.retrieval import retrieve
 
 client = Client(host="http://127.0.0.1:11434", timeout=60, trust_env=False)
 notes = load_notes(Path("example_notes"))
-note_vectors = embed_texts(
-    [f"{note.title}\n\n{note.content}" for note in notes],
+tokenizer = load_tokenizer()
+chunks = chunk_notes(notes, count_tokens=partial(count_tokens, tokenizer=tokenizer))
+chunk_vectors = embed_texts(
+    [f"{chunk.title}\n\n{chunk.content}" for chunk in chunks],
     client=client,
 )
 question = "When should temporary notes be processed and deleted?"
@@ -257,7 +277,7 @@ query = (
 )
 query_vector = embed_texts([query], client=client)[0]
 
-for result in retrieve(notes, note_vectors, query_vector, top_k=2):
+for result in retrieve(chunks, chunk_vectors, query_vector, top_k=2):
     print(f"{result.score:.4f} {result.chunk.source}: {result.chunk.title}")
 ```
 
@@ -267,7 +287,7 @@ Note text is embedded without that instruction. `embed_texts` passes its inputs
 to the model unchanged, so the caller prepares the query text.
 
 `top_k` defaults to 2 and must be a positive integer. Results are sorted by
-score from highest to lowest; ties preserve input order. If fewer notes are
+score from highest to lowest; ties preserve input order. If fewer chunks are
 available, all are returned. An empty collection with a zero-row matrix returns
 an empty list. Incompatible shapes, non-finite values, zero vectors, and
 non-finite vector norms raise `ValueError`. Input vectors are left unchanged.
@@ -282,14 +302,14 @@ check whether the retrieved text supports a response.
 `obsidian_rag.generation.generate_answer` takes the original question and the
 `SearchResult` list returned by `retrieve`. It sends the question and retrieved chunk titles,
 content, and source filenames to Ollama, then returns the answer as a string.
-Retrieval order is preserved. The default generation model is `qwen3.5:4b`.
+Retrieval order is preserved; selected chunks are not expanded back to full notes. The default generation model is `qwen3.5:4b`.
 
 After running the retrieval example above, generate an answer with:
 
 ```python
 from obsidian_rag.generation import generate_answer
 
-results = retrieve(notes, note_vectors, query_vector, top_k=2)
+results = retrieve(chunks, chunk_vectors, query_vector, top_k=2)
 answer = generate_answer(question, results, client=client)
 print(answer)
 ```

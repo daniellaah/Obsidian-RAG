@@ -155,6 +155,51 @@ OBSIDIAN_RAG_RUN_MODEL_TESTS=1 .venv/bin/python -B -m pytest \
   -p no:cacheprovider -q tests/integration/test_qwen_tokenizer.py
 ```
 
+## Split notes into chunks
+
+`obsidian_rag.chunking` exposes `chunk_notes` and `whole_note_chunks`. Both return
+immutable `Chunk` objects with `content`, `title`, `source`, `chunk_index`,
+`start_char`, and `end_char`. Positions are Python character offsets into the
+loaded `Note.content`, with an exclusive end; the loader has already removed the
+title line and outer whitespace, so these are not raw-file line numbers.
+
+```python
+from functools import partial
+from pathlib import Path
+
+from obsidian_rag.chunking import chunk_notes, whole_note_chunks
+from obsidian_rag.notes import load_notes
+from obsidian_rag.tokenization import count_tokens, load_tokenizer
+
+notes = load_notes(Path("example_notes"))
+tokenizer = load_tokenizer()
+chunks = chunk_notes(notes, count_tokens=partial(count_tokens, tokenizer=tokenizer))
+whole_chunks = whole_note_chunks(notes)  # B0: one whole note per chunk.
+```
+
+Recursive splitting defaults to a 512-token body budget and up to 64 overlapping
+tokens. It prefers paragraphs, lines, sentence punctuation in Chinese/English,
+then spaces, falling back to character boundaries for oversized units. Smaller
+units are merged by recounting the combined text. Overlap retains whole trailing
+units, so it may be below the target or zero. Titles and embedding end markers
+are outside the body budget and need to be counted with the final input.
+
+Short notes remain whole. Notes are processed independently, indices restart at
+zero, and repeated passages keep their distinct positions. Text, whitespace, and
+Markdown markers are preserved verbatim; this baseline does not interpret code
+fences or table structure. Empty bodies retain their title and source in one
+chunk. Invalid budgets and a fallback character that cannot fit raise `ValueError`.
+All chunks remain in memory. CLI integration is a separate step.
+
+The standard chunking tests are offline. To check the real Qwen tokenizer's
+512/64 budgets and lossless reconstruction on long multilingual examples, cache
+the tokenizer first and run (no Ollama service is required for this test file):
+
+```sh
+OBSIDIAN_RAG_RUN_MODEL_TESTS=1 .venv/bin/python -B -m pytest \
+  -p no:cacheprovider -q tests/integration/test_qwen_chunking.py
+```
+
 ## Generate embeddings
 
 `obsidian_rag.embeddings.embed_texts` converts a list of texts into a NumPy matrix

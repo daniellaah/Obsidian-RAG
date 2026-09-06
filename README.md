@@ -230,7 +230,7 @@ model. The example above makes a real request to the local Ollama service.
 ## Retrieve notes
 
 `obsidian_rag.retrieval.retrieve` ranks notes by cosine similarity and returns
-`SearchResult` objects containing the original `note` and a numeric `score`.
+`SearchResult` objects containing the original `chunk` and a numeric `score`.
 Each row of the note matrix must correspond to the note at the same index. Pass
 a single query vector with the same dimension, using the same embedding model
 for notes and queries.
@@ -258,7 +258,7 @@ query = (
 query_vector = embed_texts([query], client=client)[0]
 
 for result in retrieve(notes, note_vectors, query_vector, top_k=2):
-    print(f"{result.score:.4f} {result.note.source}: {result.note.title}")
+    print(f"{result.score:.4f} {result.chunk.source}: {result.chunk.title}")
 ```
 
 The query includes a task instruction in the format recommended by the
@@ -280,7 +280,7 @@ check whether the retrieved text supports a response.
 ## Generate an answer
 
 `obsidian_rag.generation.generate_answer` takes the original question and the
-`SearchResult` list returned by `retrieve`. It sends the question and note titles,
+`SearchResult` list returned by `retrieve`. It sends the question and retrieved chunk titles,
 content, and source filenames to Ollama, then returns the answer as a string.
 Retrieval order is preserved. The default generation model is `qwen3.5:4b`.
 

@@ -1,9 +1,10 @@
-"""Generate answers from retrieved notes with Ollama."""
+"""Generate answers from retrieved note chunks with Ollama."""
 
 import json
 
 from ollama import Client
 
+from obsidian_rag.chunking import Chunk
 from obsidian_rag.retrieval import SearchResult
 
 
@@ -21,14 +22,15 @@ and do not guess. Keep the answer concise.
 
 def generate_answer(
     question: str,
-    results: list[SearchResult],
+    results: list[SearchResult[Chunk]],
     *,
     client: Client,
     model: str = "qwen3.5:4b",
 ) -> str:
     """Return an answer based on the question and retrieved notes.
 
-    Send note titles, content, and source filenames in retrieval order. Request
+    Send chunk titles, verbatim content, and source filenames in retrieval order.
+    Do not expand a retrieved chunk back to its full note. Request
     citations and an explicit admission when the notes lack the requested facts.
     These are model instructions; generated claims and citations are not verified
     by this function.
@@ -47,9 +49,9 @@ def generate_answer(
         "question": question,
         "notes": [
             {
-                "title": result.note.title,
-                "content": result.note.content,
-                "source": result.note.source,
+                "title": result.chunk.title,
+                "content": result.chunk.content,
+                "source": result.chunk.source,
             }
             for result in results
         ],

@@ -11,13 +11,8 @@ from numpy.typing import NDArray
 class SearchResult[T]:
     """A retrieved item and its cosine similarity to a query."""
 
-    note: T
+    chunk: T
     score: float
-
-    @property
-    def chunk(self) -> T:
-        """Expose the retrieved chunk while whole-note callers are migrated."""
-        return self.note
 
 
 def retrieve[T](
@@ -68,6 +63,6 @@ def retrieve[T](
     indices = np.argsort(-scores, kind="stable")[:top_k]
 
     return [
-        SearchResult(note=notes[index], score=float(scores[index]))
+        SearchResult(chunk=notes[index], score=float(scores[index]))
         for index in indices
     ]

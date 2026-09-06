@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 from ollama import ChatResponse, Client, Message, ResponseError
 
+from obsidian_rag.chunking import chunk_notes, whole_note_chunks
 from obsidian_rag.generation import generate_answer
 from obsidian_rag.notes import Note
 from obsidian_rag.retrieval import SearchResult
@@ -20,24 +21,20 @@ def client() -> Mock:
 
 @pytest.fixture
 def results() -> list[SearchResult]:
-    return [
-        SearchResult(
-            note=Note(
-                title="Fleeting Notes",
-                content='Process them within two days.\nSönke calls them "reminders".',
-                source="fleeting_notes.md",
-            ),
-            score=0.9,
+    chunks = whole_note_chunks([
+        Note(
+            title="Fleeting Notes",
+            content='Process them within two days.\nSönke calls them "reminders".',
+            source="fleeting_notes.md",
         ),
-        SearchResult(
-            note=Note(
-                title="Permanent Notes",
-                content="Develop one idea per note.",
-                source="permanent_notes.md",
-            ),
-            score=0.7,
+        Note(
+            title="Permanent Notes",
+            content="Develop one idea per note.",
+            source="permanent_notes.md",
         ),
-    ]
+    ])
+    return [SearchResult(chunk=chunks[0], score=0.9),
+            SearchResult(chunk=chunks[1], score=0.7)]
 
 
 @pytest.mark.parametrize(
@@ -164,3 +161,19 @@ def test_generate_answer_propagates_connection_errors(
 
     with pytest.raises(ConnectionError, match="Ollama is unavailable"):
         generate_answer("What do these notes say?", results, client=client)
+
+
+def test_generate_answer_sends_only_the_retrieved_chunk(client: Mock) -> None:
+    chunks = chunk_notes(
+        [Note(title="A note", content="Selected evidence.\n\nUnrelated material.",
+              source="note.md")],
+        count_tokens=len, chunk_size=20, chunk_overlap=0,
+    )
+
+    generate_answer("What is supported?", [SearchResult(chunk=chunks[0], score=0.9)],
+                    client=client)
+
+    payload = json.loads(client.chat.call_args.kwargs["messages"][1]["content"])
+    assert payload["notes"] == [{
+        "title": "A note", "content": "Selected evidence.\n\n", "source": "note.md",
+    }]

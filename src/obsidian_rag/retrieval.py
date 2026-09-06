@@ -1,31 +1,37 @@
-"""Rank Markdown notes by cosine similarity."""
+"""Rank document chunks by cosine similarity."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
 
-from obsidian_rag.notes import Note
-
 
 @dataclass(frozen=True)
-class SearchResult:
-    """A note and its cosine similarity to a query."""
+class SearchResult[T]:
+    """A retrieved item and its cosine similarity to a query."""
 
-    note: Note
+    note: T
     score: float
 
+    @property
+    def chunk(self) -> T:
+        """Expose the retrieved chunk while whole-note callers are migrated."""
+        return self.note
 
-def retrieve(
-    notes: list[Note],
+
+def retrieve[T](
+    notes: Sequence[T],
     note_vectors: NDArray[np.float64],
     query_vector: NDArray[np.float64],
     *,
     top_k: int = 2,
-) -> list[SearchResult]:
-    """Return up to top_k notes ordered by descending cosine similarity.
+) -> list[SearchResult[T]]:
+    """Return up to top_k items ordered by descending cosine similarity.
 
-    Each row of note_vectors must correspond to the note at the same index.
+    Each vector row must correspond to the item at the same index. Items from
+    the same source are ranked independently; no document-level deduplication
+    takes place. The original objects and their source spans are preserved.
     The query must be one vector with the same dimension as the note vectors.
     Equal scores preserve input order, and input vectors are left unchanged.
     An empty collection with a zero-row matrix returns no results.

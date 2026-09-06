@@ -2,18 +2,19 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from obsidian_rag.chunking import Chunk, chunk_notes, whole_note_chunks
 from obsidian_rag.notes import Note
 from obsidian_rag.retrieval import retrieve
 
 
 @pytest.fixture
-def notes() -> list[Note]:
-    return [
+def notes() -> list[Chunk]:
+    return whole_note_chunks([
         Note(title="Diagonal", content="A diagonal vector.", source="diagonal.md"),
         Note(title="Opposite", content="An opposite vector.", source="opposite.md"),
         Note(title="Aligned", content="An aligned vector.", source="aligned.md"),
         Note(title="Orthogonal", content="A perpendicular vector.", source="orthogonal.md"),
-    ]
+    ])
 
 
 @pytest.fixture
@@ -22,22 +23,22 @@ def note_vectors() -> NDArray[np.float64]:
 
 
 def test_retrieve_ranks_notes_by_cosine_similarity(
-    notes: list[Note], note_vectors: NDArray[np.float64]
+    notes: list[Chunk], note_vectors: NDArray[np.float64]
 ) -> None:
     results = retrieve(notes, note_vectors, np.array([2.0, 0.0]), top_k=4)
 
-    assert [result.note for result in results] == [
+    assert [result.chunk for result in results] == [
         notes[2], notes[0], notes[3], notes[1]
     ]
     np.testing.assert_allclose([result.score for result in results], [1.0, 0.6, 0.0, -1.0])
 
 
 def test_retrieve_returns_two_notes_by_default(
-    notes: list[Note], note_vectors: NDArray[np.float64]
+    notes: list[Chunk], note_vectors: NDArray[np.float64]
 ) -> None:
     results = retrieve(notes, note_vectors, np.array([2.0, 0.0]))
 
-    assert [result.note for result in results] == [notes[2], notes[0]]
+    assert [result.chunk for result in results] == [notes[2], notes[0]]
 
 
 @pytest.mark.parametrize(
@@ -48,26 +49,26 @@ def test_retrieve_returns_two_notes_by_default(
     ],
 )
 def test_retrieve_limits_results_to_the_requested_and_available_count(
-    notes: list[Note],
+    notes: list[Chunk],
     note_vectors: NDArray[np.float64],
     top_k: int,
     expected_sources: list[str],
 ) -> None:
     results = retrieve(notes, note_vectors, np.array([2.0, 0.0]), top_k=top_k)
 
-    assert [result.note.source for result in results] == expected_sources
+    assert [result.chunk.source for result in results] == expected_sources
 
 
-def test_retrieve_preserves_input_order_when_scores_are_equal(notes: list[Note]) -> None:
+def test_retrieve_preserves_input_order_when_scores_are_equal(notes: list[Chunk]) -> None:
     vectors = np.array([[1.0, 0.0], [2.0, 0.0], [4.0, 0.0], [8.0, 0.0]])
 
     results = retrieve(notes, vectors, np.array([2.0, 0.0]), top_k=3)
 
-    assert [result.note for result in results] == notes[:3]
+    assert [result.chunk for result in results] == notes[:3]
 
 
 def test_retrieve_does_not_modify_input_vectors(
-    notes: list[Note], note_vectors: NDArray[np.float64]
+    notes: list[Chunk], note_vectors: NDArray[np.float64]
 ) -> None:
     query_vector = np.array([2.0, 0.0])
     original_notes = note_vectors.copy()
@@ -85,7 +86,7 @@ def test_retrieve_returns_no_results_for_an_empty_collection() -> None:
 
 @pytest.mark.parametrize("top_k", [0, -1, 1.5, True])
 def test_retrieve_rejects_invalid_result_counts(
-    notes: list[Note], note_vectors: NDArray[np.float64], top_k: int | float
+    notes: list[Chunk], note_vectors: NDArray[np.float64], top_k: int | float
 ) -> None:
     with pytest.raises(ValueError, match="positive integer"):
         retrieve(notes, note_vectors, np.array([2.0, 0.0]), top_k=top_k)
@@ -109,7 +110,7 @@ def test_retrieve_rejects_invalid_result_counts(
     ],
 )
 def test_retrieve_rejects_incompatible_vector_shapes(
-    notes: list[Note], vectors: list, query: list
+    notes: list[Chunk], vectors: list, query: list
 ) -> None:
     with pytest.raises(ValueError):
         retrieve(notes, np.array(vectors), np.array(query))
@@ -117,7 +118,7 @@ def test_retrieve_rejects_incompatible_vector_shapes(
 
 @pytest.mark.parametrize("target", ["notes", "query"])
 def test_retrieve_rejects_zero_vectors(
-    notes: list[Note], note_vectors: NDArray[np.float64], target: str
+    notes: list[Chunk], note_vectors: NDArray[np.float64], target: str
 ) -> None:
     query_vector = np.array([2.0, 0.0])
     if target == "notes":
@@ -133,7 +134,7 @@ def test_retrieve_rejects_zero_vectors(
     ("target", "value"), [("notes", float("nan")), ("query", float("inf"))]
 )
 def test_retrieve_rejects_non_finite_values(
-    notes: list[Note],
+    notes: list[Chunk],
     note_vectors: NDArray[np.float64],
     target: str,
     value: float,
@@ -146,3 +147,18 @@ def test_retrieve_rejects_non_finite_values(
 
     with pytest.raises(ValueError, match="finite"):
         retrieve(notes, note_vectors, query_vector)
+
+
+def test_retrieve_returns_distinct_chunks_from_the_same_note() -> None:
+    chunks = chunk_notes(
+        [Note(title="One note", content="abcdef", source="same.md")],
+        count_tokens=len, chunk_size=3, chunk_overlap=0,
+    )
+    vectors = np.array([[0.0, 1.0], [1.0, 0.0]])
+
+    results = retrieve(chunks, vectors, np.array([1.0, 0.0]), top_k=2)
+
+    assert [(r.chunk.content, r.chunk.source, r.chunk.start_char) for r in results] == [
+        ("def", "same.md", 3), ("abc", "same.md", 0),
+    ]
+    assert results[0].chunk is chunks[1]
